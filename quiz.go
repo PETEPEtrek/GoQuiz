@@ -64,23 +64,24 @@ func getExamples(filename string, shuffle bool) ([][]string, error) {
 	return equationsAndAnswers, nil
 }
 
-func getInput(input chan int) {
+func getInput(input chan int, sourceFile *os.File) {
 	for {
 		answer := 0
-		for _, err := fmt.Fscan(os.Stdin, &answer); err != nil; {
+		for _, err := fmt.Fscan(sourceFile, &answer); err != nil; {
 			fmt.Println("Please, write the answer one more time")
 		}
 		input <- answer
 	}
 }
 
-func Quiz(list [][]string, duration int) int64 {
+func Quiz(list [][]string, duration int, sourceFile *os.File) int64 {
+
 	var counter int64 = 0
 	var timerSet = false
 
 	input := make(chan int)
 	timer = time.NewTimer(time.Duration(duration) * time.Second)
-	go getInput(input)
+	go getInput(input, sourceFile)
 	for i, question := range list {
 		fmt.Print("What is the answer for ", question[0], "?\n")
 		ans, err := quest(question[1], input, &timerSet)
@@ -135,11 +136,24 @@ func quest(ans string, input <-chan int, timerSet *bool) (int64, error) {
 func main() {
 	var filename string
 	var shuffle bool
+	var in string
 
 	flag.StringVar(&filename, "file", "problems.csv", "file with questions and answers")
 	flag.IntVar(&duration, "dur", 30, "number of seconds before timeout")
 	flag.BoolVar(&shuffle, "shuffle", false, "shuffling the questions")
+	flag.StringVar(&in, "read_from", "", "a source of answers")
 	flag.Parse()
+
+	var sourceFile *os.File
+	if in == "" {
+		sourceFile = os.Stdin
+	} else {
+		err := error(nil)
+		sourceFile, err = os.Open(in)
+		if err != nil {
+			log.Fatalf("Problems with source file: %s", in)
+		}
+	}
 
 	list, err := getExamples(filename, shuffle)
 	if err != nil {
@@ -149,7 +163,7 @@ func main() {
 	fmt.Println("Press the Enter key to start a quiz")
 	fmt.Scanln()
 
-	trueAnswers := Quiz(list, duration)
+	trueAnswers := Quiz(list, duration, sourceFile)
 
 	fmt.Println("You have", trueAnswers, "correct answers from", len(list))
 	if trueAnswers < int64(len(list)/2) {
