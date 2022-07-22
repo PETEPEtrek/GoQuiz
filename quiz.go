@@ -2,16 +2,18 @@ package main
 
 import (
 	"encoding/csv"
+	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
 	"time"
 )
 
-var filename = "problems.csv"
-var timer = time.NewTicker(time.Second * 30)
+var timer = time.NewTimer(time.Second * 30)
+var duration = 30
 
 func stripString(string []byte) []byte {
 	n := 0
@@ -31,7 +33,7 @@ func stripString(string []byte) []byte {
 	return string[:n]
 }
 
-func getExamples(filename string) ([][]string, error) {
+func getExamples(filename string, shuffle bool) ([][]string, error) {
 	file, err := os.Open(filename)
 	errorLog := log.New(os.Stderr, "ERROR\t", log.Ldate|log.Ltime|log.Lshortfile)
 	if err != nil {
@@ -53,6 +55,12 @@ func getExamples(filename string) ([][]string, error) {
 		record[1] = string(stripString([]byte(record[1])))
 		equationsAndAnswers = append(equationsAndAnswers, record)
 	}
+	if shuffle == true {
+		rand.Seed(time.Now().UnixNano())
+		rand.Shuffle(len(equationsAndAnswers), func(i, j int) {
+			equationsAndAnswers[i], equationsAndAnswers[j] = equationsAndAnswers[j], equationsAndAnswers[i]
+		})
+	}
 	return equationsAndAnswers, nil
 }
 
@@ -66,16 +74,22 @@ func getInput(input chan int) {
 	}
 }
 
-func Quiz(list [][]string) int64 {
+func Quiz(list [][]string, duration int) int64 {
 	var counter int64 = 0
+	var timerSet = false
+
 	input := make(chan int)
-	tim := time.NewTimer(time.Second * 2)
+	timer = time.NewTimer(time.Duration(duration) * time.Second)
 	go getInput(input)
 	for i, question := range list {
-		fmt.Print("What is an answer for ", question[0], "?\n")
-		ans, err := quest(question[1], tim.C, input)
+		fmt.Print("What is the answer for ", question[0], "?\n")
+		ans, err := quest(question[1], input, &timerSet)
 		if err != nil {
 			fmt.Println("Time has passed, next question")
+		} else if err != nil && i != len(list)-1 {
+			fmt.Println("Time has passed")
+		} else if i != len(list)-1 {
+			fmt.Println("Next question:")
 		}
 		counter += ans
 		if i == len(list)-1 {
@@ -85,12 +99,14 @@ func Quiz(list [][]string) int64 {
 	return counter
 }
 
-func quest(ans string, timer <-chan time.Time, input <-chan int) (int64, error) {
+func quest(ans string, input <-chan int, timerSet *bool) (int64, error) {
 	for {
 		select {
-		case <-timer:
-
+		case <-timer.C:
+			*timerSet = false
+			timer.Reset(time.Second * time.Duration(duration))
 			return 0, fmt.Errorf("Time out!")
+
 		case answer := <-input:
 			isRight := 0
 			strAns := strconv.Itoa(answer)
@@ -99,36 +115,42 @@ func quest(ans string, timer <-chan time.Time, input <-chan int) (int64, error) 
 			} else {
 				isRight = 0
 			}
-			fmt.Println("Next question:")
+
+			if *timerSet {
+				if !timer.Stop() {
+					<-timer.C
+				}
+				*timerSet = false
+			}
+
+			if !*timerSet {
+				*timerSet = true
+				timer.Reset(time.Second * time.Duration(duration))
+			}
 			return int64(isRight), nil
+
 		}
 	}
 }
 func main() {
-	args := os.Args
-	if len(args) > 1 && args[1] == "true" {
-		fmt.Print("Please, write a new name of csv file: ")
-		_, err := fmt.Fscan(os.Stdin, &filename)
-		if err != nil {
-			log.Fatalf("Can't get the filename")
-		}
-	}
-	if len(args) > 2 {
-		num, err := strconv.Atoi(args[2])
-		if err != nil {
-			log.Fatalf("Not a number: %s", args[2])
-		}
-		timer = time.NewTicker(time.Second * time.Duration(num))
-	}
+	var filename string
+	var shuffle bool
 
-	list, err := getExamples(filename)
+	flag.StringVar(&filename, "file", "problems.csv", "file with questions and answers")
+	flag.IntVar(&duration, "dur", 30, "number of seconds before timeout")
+	flag.BoolVar(&shuffle, "shuffle", false, "shuffling the questions")
+	flag.Parse()
+
+	list, err := getExamples(filename, shuffle)
 	if err != nil {
 		log.Fatalf("Problems with file: %s", filename)
 	}
 
 	fmt.Println("Press the Enter key to start a quiz")
 	fmt.Scanln()
-	trueAnswers := Quiz(list)
+
+	trueAnswers := Quiz(list, duration)
+
 	fmt.Println("You have", trueAnswers, "correct answers from", len(list))
 	if trueAnswers < int64(len(list)/2) {
 		fmt.Println("Try harder next time!")
